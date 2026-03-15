@@ -250,27 +250,104 @@ def handle_slash_command(
 # ─── Async REPL Core ─────────────────────────────────────────────────────────
 
 
+# ─── Session Builder Helpers ──────────────────────────────────────────────────
+
+
+def _build_compression(cfg: PersiaConfig) -> list:
+    """Build compression strategy list from config."""
+    from pylemura import (
+        SandwichCompressionStrategy, SandwichCompressionConfig,
+        HistoryCompressionStrategy, HistoryCompressionConfig,
+    )
+    c = cfg.compression
+    if c.strategy == "sandwich":
+        return [SandwichCompressionStrategy(SandwichCompressionConfig(
+            preserve_first=c.preserve_first,
+            preserve_last=c.preserve_last,
+            trigger_ratio=c.trigger,
+            priority=20,
+            summary_max_tokens=c.summary_tokens,
+        ))]
+    elif c.strategy == "history":
+        return [HistoryCompressionStrategy(HistoryCompressionConfig(
+            keep_last_n=c.preserve_last,
+            trigger_ratio=c.trigger,
+            priority=30,
+            summary_max_tokens=c.summary_tokens,
+        ))]
+    return []  # "none"
+
+
+def _build_firewall(cfg: PersiaConfig):
+    """Build ToolFirewallConfig from config, or None if default=accept and no rules."""
+    try:
+        from pylemura.types.agent import ToolFirewallConfig, ToolFirewallRule
+    except ImportError:
+        return None
+
+    fw = cfg.firewall
+    rules = []
+
+    for tool_name in fw.allow_tools:
+        rules.append(ToolFirewallRule(tool_pattern=f"^{tool_name}$", decision="accept"))
+    for tool_name in fw.deny_tools:
+        rules.append(ToolFirewallRule(tool_pattern=f"^{tool_name}$", decision="deny"))
+    for tool_name in fw.ask_tools:
+        rules.append(ToolFirewallRule(tool_pattern=f"^{tool_name}$", decision="ask"))
+
+    if not rules and fw.default == "accept":
+        return None  # No firewall needed
+
+    async def _on_ask(tool_name: str, args_json: str) -> bool:
+        from rich.prompt import Confirm
+        console.print()
+        render_warning(f"Firewall: tool [bold yellow]{tool_name}[/bold yellow] requires confirmation.")
+        console.print(f"  [dim]Args: {args_json[:200]}[/dim]")
+        return Confirm.ask("  Allow this tool call?", default=True)
+
+    return ToolFirewallConfig(
+        default_decision=fw.default,
+        rules=rules,
+        on_ask=_on_ask,
+    )
+
+
+def _build_budget(cfg: PersiaConfig):
+    """Build ToolExecutionBudget from config, or None if unlimited."""
+    try:
+        from pylemura.types.agent import ToolExecutionBudget
+    except ImportError:
+        return None
+
+    b = cfg.budget
+    if b.max_total_calls == 0 and not b.per_tool:
+        return None
+
+    return ToolExecutionBudget(
+        max_total_calls=b.max_total_calls if b.max_total_calls > 0 else None,
+        max_calls_per_tool=b.per_tool if b.per_tool else None,
+    )
+
+
+# ─── Async REPL Core ─────────────────────────────────────────────────────────
+
+
 async def run_repl(cfg: PersiaConfig, verbose: bool = False) -> None:
     """Run the interactive REPL loop."""
-    from .agent import PersiaAgent
-
     trace_handler = PersiaTraceHandler(show_tools=cfg.show_tool_calls)
 
-    # Patch the session config to include trace callback
-    original_system_prompt = cfg.system_prompt
-    agent = PersiaAgent(cfg, verbose=verbose)
-
-    # Inject trace handler — rebuild session with on_trace
     from pylemura import (
         OpenAICompatibleAdapter,
         OpenAICompatibleAdapterConfig,
         SessionManager,
         SandwichCompressionStrategy,
         SandwichCompressionConfig,
+        HistoryCompressionStrategy,
+        HistoryCompressionConfig,
         DefaultLogger,
         LogLevel,
     )
-    from pylemura.types.agent import SessionConfig
+    from pylemura.types.agent import SessionConfig, ToolExecutionBudget, ToolFirewallConfig, ToolFirewallRule
     from .tools import (
         make_filesystem_tools, make_shell_tools, make_system_tools,
         make_web_tools, make_clipboard_tools,
@@ -280,6 +357,8 @@ async def run_repl(cfg: PersiaConfig, verbose: bool = False) -> None:
         base_url=cfg.base_url,
         api_key=cfg.api_key,
         default_model=cfg.model,
+        timeout=cfg.timeout,
+        max_retries=cfg.max_retries,
     )
     adapter = OpenAICompatibleAdapter(adapter_cfg)
 
@@ -290,22 +369,22 @@ async def run_repl(cfg: PersiaConfig, verbose: bool = False) -> None:
     tools.extend(make_system_tools())
     if cfg.allow_web:
         tools.extend(make_web_tools())
-    tools.extend(make_clipboard_tools())
+    if cfg.allow_desktop:
+        tools.extend(make_clipboard_tools())
 
-    compression = SandwichCompressionStrategy(
-        SandwichCompressionConfig(
-            preserve_first=2,
-            preserve_last=6,
-            trigger_ratio=0.80,
-            priority=20,
-            summary_max_tokens=600,
-        )
-    )
+    # Compression strategy from config
+    compression_strategies = _build_compression(cfg)
 
-    logger = DefaultLogger(
-        level=LogLevel.DEBUG if verbose else LogLevel.WARN,
-        colorize=True,
-    )
+    # Log level
+    _log_level_map = {"debug": LogLevel.DEBUG, "info": LogLevel.INFO, "warn": LogLevel.WARN, "error": LogLevel.ERROR}
+    log_level = LogLevel.DEBUG if verbose else _log_level_map.get(cfg.log_level, LogLevel.WARN)
+    logger = DefaultLogger(level=log_level, colorize=True)
+
+    # Firewall
+    firewall_cfg = _build_firewall(cfg)
+
+    # Budget
+    budget_cfg = _build_budget(cfg)
 
     session_cfg = SessionConfig(
         adapter=adapter,
@@ -315,9 +394,12 @@ async def run_repl(cfg: PersiaConfig, verbose: bool = False) -> None:
         max_steps=cfg.max_steps,
         tools=tools,
         system_prompt=cfg.system_prompt,
-        compression_strategies=[compression],
+        compression_strategies=compression_strategies,
         logger=logger,
         on_trace=trace_handler,
+        tool_firewall=firewall_cfg,
+        tool_execution_budget=budget_cfg,
+        max_tokens_per_tool=cfg.budget.max_tokens_per_tool if cfg.budget.max_tokens_per_tool else None,
     )
 
     session = SessionManager(session_cfg)
@@ -453,8 +535,6 @@ async def run_once(cfg: PersiaConfig, message: str, verbose: bool = False) -> No
         OpenAICompatibleAdapter,
         OpenAICompatibleAdapterConfig,
         SessionManager,
-        SandwichCompressionStrategy,
-        SandwichCompressionConfig,
         DefaultLogger,
         LogLevel,
     )
@@ -469,6 +549,8 @@ async def run_once(cfg: PersiaConfig, message: str, verbose: bool = False) -> No
             base_url=cfg.base_url,
             api_key=cfg.api_key,
             default_model=cfg.model,
+            timeout=cfg.timeout,
+            max_retries=cfg.max_retries,
         )
     )
 
@@ -479,9 +561,12 @@ async def run_once(cfg: PersiaConfig, message: str, verbose: bool = False) -> No
     tools.extend(make_system_tools())
     if cfg.allow_web:
         tools.extend(make_web_tools())
-    tools.extend(make_clipboard_tools())
+    if cfg.allow_desktop:
+        tools.extend(make_clipboard_tools())
 
-    logger = DefaultLogger(level=LogLevel.DEBUG if verbose else LogLevel.WARN)
+    _log_level_map = {"debug": LogLevel.DEBUG, "info": LogLevel.INFO, "warn": LogLevel.WARN, "error": LogLevel.ERROR}
+    log_level = LogLevel.DEBUG if verbose else _log_level_map.get(cfg.log_level, LogLevel.WARN)
+    logger = DefaultLogger(level=log_level, colorize=True)
 
     trace_handler = PersiaTraceHandler(show_tools=cfg.show_tool_calls)
 
@@ -493,8 +578,12 @@ async def run_once(cfg: PersiaConfig, message: str, verbose: bool = False) -> No
         max_steps=cfg.max_steps,
         tools=tools,
         system_prompt=cfg.system_prompt,
+        compression_strategies=_build_compression(cfg),
         logger=logger,
         on_trace=trace_handler,
+        tool_firewall=_build_firewall(cfg),
+        tool_execution_budget=_build_budget(cfg),
+        max_tokens_per_tool=cfg.budget.max_tokens_per_tool if cfg.budget.max_tokens_per_tool else None,
     )
 
     session = SessionManager(session_cfg)
