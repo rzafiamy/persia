@@ -281,7 +281,7 @@ def _build_compression(cfg: PersiaConfig) -> list:
 def _build_firewall(cfg: PersiaConfig):
     """Build ToolFirewallConfig from config, or None if default=accept and no rules."""
     try:
-        from pylemura.types.agent import ToolFirewallConfig, ToolFirewallRule
+        from pylemura.types.tools import ToolFirewallConfig, ToolFirewallRule
     except ImportError:
         return None
 
@@ -289,21 +289,60 @@ def _build_firewall(cfg: PersiaConfig):
     rules = []
 
     for tool_name in fw.allow_tools:
-        rules.append(ToolFirewallRule(tool_pattern=f"^{tool_name}$", decision="accept"))
+        rules.append(ToolFirewallRule(name=f"^{tool_name}$", decision="accept"))
     for tool_name in fw.deny_tools:
-        rules.append(ToolFirewallRule(tool_pattern=f"^{tool_name}$", decision="deny"))
+        rules.append(ToolFirewallRule(name=f"^{tool_name}$", decision="deny"))
     for tool_name in fw.ask_tools:
-        rules.append(ToolFirewallRule(tool_pattern=f"^{tool_name}$", decision="ask"))
+        rules.append(ToolFirewallRule(name=f"^{tool_name}$", decision="ask"))
 
     if not rules and fw.default == "accept":
         return None  # No firewall needed
 
-    async def _on_ask(tool_name: str, args_json: str) -> bool:
-        from rich.prompt import Confirm
+    async def _on_ask(tool_name: str, args_json: str) -> str:
+        import asyncio
+        from rich import box
+        from rich.panel import Panel
+        from rich.text import Text
+
+        loop = asyncio.get_event_loop()
+
+        # Run ALL display + input in one executor thread to avoid terminal race conditions
+        def _prompt() -> bool:
+            # Build a clean approval panel
+            body = Text()
+            body.append("Tool:  ", style="dim")
+            body.append(tool_name, style="bold yellow")
+            body.append("\nArgs:  ", style="dim")
+            body.append(args_json[:300], style="dim white")
+
+            console.print()
+            console.print(Panel(
+                body,
+                title="[bold yellow]⚠  Firewall — Approval Required[/bold yellow]",
+                border_style="yellow",
+                box=box.ROUNDED,
+                padding=(0, 2),
+            ))
+
+            while True:
+                try:
+                    answer = console.input(
+                        "  Allow this tool call? [bold][[green]y[/green]/[red]n[/red]][/bold]: "
+                    ).strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    return False
+                if answer in ("y", "yes", ""):
+                    return True
+                if answer in ("n", "no"):
+                    return False
+                console.print("  [dim]Please answer y or n.[/dim]")
+
+        allowed = await loop.run_in_executor(None, _prompt)
+        decision = "accept" if allowed else "deny"
+        icon, color = ("✓ Allowed", "green") if allowed else ("✗ Denied", "red")
+        console.print(f"  [{color}]{icon}: {tool_name}[/{color}]")
         console.print()
-        render_warning(f"Firewall: tool [bold yellow]{tool_name}[/bold yellow] requires confirmation.")
-        console.print(f"  [dim]Args: {args_json[:200]}[/dim]")
-        return Confirm.ask("  Allow this tool call?", default=True)
+        return decision
 
     return ToolFirewallConfig(
         default_decision=fw.default,
@@ -315,7 +354,7 @@ def _build_firewall(cfg: PersiaConfig):
 def _build_budget(cfg: PersiaConfig):
     """Build ToolExecutionBudget from config, or None if unlimited."""
     try:
-        from pylemura.types.agent import ToolExecutionBudget
+        from pylemura.types.tools import ToolExecutionBudget
     except ImportError:
         return None
 
@@ -347,7 +386,8 @@ async def run_repl(cfg: PersiaConfig, verbose: bool = False) -> None:
         DefaultLogger,
         LogLevel,
     )
-    from pylemura.types.agent import SessionConfig, ToolExecutionBudget, ToolFirewallConfig, ToolFirewallRule
+    from pylemura.types.agent import SessionConfig
+    from pylemura.types.tools import ToolExecutionBudget, ToolFirewallConfig, ToolFirewallRule
     from .tools import (
         make_filesystem_tools, make_shell_tools, make_system_tools,
         make_web_tools, make_clipboard_tools,

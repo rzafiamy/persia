@@ -10,7 +10,9 @@
       "Bash(PERSIA_API_KEY=sk-test1234 persia status)",
       "Bash(persia status:*)",
       "Bash(python -c \"from persia.cli import _build_compression, _build_firewall, _build_budget, run_repl; print\\(''CLI helpers OK''\\)\")",
-      "Bash(ls -la /home/cook/Documents/Dev/Dev-ai/workspace/persia/.env*)"
+      "Bash(ls -la /home/cook/Documents/Dev/Dev-ai/workspace/persia/.env*)",
+      "Bash(python -c \"from persia.cli import _build_firewall, _build_budget, _build_compression, run_repl; print\\(''OK''\\)\")",
+      "Bash(persia tools:*)"
     ]
   }
 }
