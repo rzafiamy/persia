@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from persia.cli import cli; from persia.display import console; console.print\\(''[green]Import OK[/green]''\\)\")",
+      "Bash(persia --help)",
+      "Bash(PERSIA_API_KEY=test persia tools)",
+      "Bash(PERSIA_API_KEY=test persia status)",
+      "Bash(PERSIA_API_KEY=test persia ask --help)",
+      "Bash(python -c \":*)",
+      "Bash(PERSIA_API_KEY=sk-test1234 persia status)"
+    ]
+  }
+}

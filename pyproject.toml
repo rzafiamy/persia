@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "persia"
+version = "0.1.0"
+description = "Persia — A powerful autonomous AI agent CLI for your PC"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["ai", "agent", "cli", "assistant", "autonomous", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Console",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "pylemura>=1.0.0",
+    "rich>=13.7.0",
+    "click>=8.1.0",
+    "psutil>=5.9.0",
+    "httpx>=0.27.0",
+    "pyperclip>=1.8.2",
+    "prompt_toolkit>=3.0.0",
+]
+
+[project.scripts]
+persia = "persia.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["persia"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
