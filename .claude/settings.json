@@ -7,7 +7,8 @@
       "Bash(PERSIA_API_KEY=test persia status)",
       "Bash(PERSIA_API_KEY=test persia ask --help)",
       "Bash(python -c \":*)",
-      "Bash(PERSIA_API_KEY=sk-test1234 persia status)"
+      "Bash(PERSIA_API_KEY=sk-test1234 persia status)",
+      "Bash(persia status:*)"
     ]
   }
 }

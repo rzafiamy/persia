@@ -45,7 +45,7 @@ class PersiaConfig:
         """Load config from file, falling back to env vars and defaults."""
         cfg = cls()
 
-        # Load from file if exists
+        # Load from JSON config file if exists
         if CONFIG_FILE.exists():
             try:
                 data = json.loads(CONFIG_FILE.read_text())
@@ -54,6 +54,22 @@ class PersiaConfig:
                         setattr(cfg, k, v)
             except Exception:
                 pass
+
+        # Load .env files (cwd first, then config dir) — later files win
+        for env_file in [CONFIG_DIR / ".env", Path.cwd() / ".env"]:
+            if env_file.exists():
+                try:
+                    for line in env_file.read_text().splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        key, _, value = line.partition("=")
+                        key = key.strip()
+                        value = value.strip().strip('"').strip("'")
+                        if key:
+                            os.environ.setdefault(key, value)
+                except Exception:
+                    pass
 
         # Override with environment variables
         env_map = {

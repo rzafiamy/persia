@@ -57,24 +57,19 @@ except ImportError:
     _HAS_PROMPT_TOOLKIT = False
 
 
-def _get_prompt_input(session: Optional[object] = None) -> str:
+async def _get_prompt_input(session: Optional[object] = None) -> str:
     """Get user input with prompt_toolkit if available, else fallback."""
     prompt_text = "You › "
     if _HAS_PROMPT_TOOLKIT and session:
-        try:
-            return session.prompt(
-                HTML(f"<prompt>{prompt_text}</prompt>"),
-                style=_PT_STYLE,
-                auto_suggest=AutoSuggestFromHistory(),
-                multiline=False,
-            )
-        except KeyboardInterrupt:
-            raise
-        except EOFError:
-            raise
-        except Exception:
-            pass
-    return input(prompt_text)
+        return await session.prompt_async(
+            HTML(f"<prompt>{prompt_text}</prompt>"),
+            style=_PT_STYLE,
+            auto_suggest=AutoSuggestFromHistory(),
+            multiline=False,
+        )
+    # Fallback: run blocking input() in a thread so the event loop stays free
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: input(prompt_text))
 
 
 # ─── Trace & Tool Callback Handler ───────────────────────────────────────────
@@ -343,7 +338,7 @@ async def run_repl(cfg: PersiaConfig, verbose: bool = False) -> None:
     while True:
         try:
             # Get user input
-            user_input = _get_prompt_input(pt_session)
+            user_input = await _get_prompt_input(pt_session)
         except (KeyboardInterrupt, EOFError):
             console.print()
             render_info("Goodbye! ✦")
